@@ -3,18 +3,15 @@ package com.murad.mongo_semantic_search.repository;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
-import java.util.Optional;
 
 @Repository
 public class DoctorSearchRepositoryImpl implements DoctorSearchRepository {
 
     private final VectorStore vectorStore;
 
-    @Autowired
     public DoctorSearchRepositoryImpl(VectorStore vectorStore) {
         this.vectorStore = vectorStore;
     }
@@ -25,8 +22,8 @@ public class DoctorSearchRepositoryImpl implements DoctorSearchRepository {
     }
 
     @Override
-    public Optional<Boolean> deleteDocuments(List<String> ids) {
-        return vectorStore.delete(ids);
+    public void deleteDocuments(List<String> ids) {
+        vectorStore.delete(ids);
     }
 
     @Override
