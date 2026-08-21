@@ -2,19 +2,16 @@ package com.murad.mongo_semantic_search.service;
 
 
 import com.murad.mongo_semantic_search.model.DocumentRequest;
+import com.murad.mongo_semantic_search.model.DoctorSearchResult;
 import com.murad.mongo_semantic_search.repository.DoctorSearchRepository;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.filter.Filter.Expression;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
 
 /**
  * Service class for handling doctor search operations.
@@ -22,10 +19,13 @@ import java.util.stream.Collectors;
 @Service
 public class DoctorSearchService {
 
-    private static final int MAX_TOKENS = (int) (8192 * 0.80); // OpenAI model's maximum content length + BUFFER for when one word > 1 token
+    private static final int MAX_DOCUMENT_CHARACTERS = 24_000;
 
-    @Autowired
-    private DoctorSearchRepository doctorSearchRepository;
+    private final DoctorSearchRepository doctorSearchRepository;
+
+    public DoctorSearchService(DoctorSearchRepository doctorSearchRepository) {
+        this.doctorSearchRepository = doctorSearchRepository;
+    }
 
     /**
      * Adds validated documents to the repository after filtering out null or excessively long documents.
@@ -39,16 +39,12 @@ public class DoctorSearchService {
         }
 
         List<Document> docs = documents.stream()
-            .filter(doc -> doc != null && doc.getContent() != null && !doc.getContent()
+            .filter(doc -> doc != null && doc.content() != null && !doc.content()
                 .trim()
                 .isEmpty())
-            .map(doc -> new Document(doc.getContent(), doc.getMetadata()))
-            .filter(doc -> {
-                int wordCount = doc.getContent()
-                    .split("\\s+").length;
-                return wordCount <= MAX_TOKENS;
-            })
-            .collect(Collectors.toList());
+            .filter(doc -> doc.content().length() <= MAX_DOCUMENT_CHARACTERS)
+            .map(doc -> new Document(doc.content().trim(), doc.metadata()))
+            .toList();
 
         if (!docs.isEmpty()) {
             doctorSearchRepository.addDocuments(docs);
@@ -68,12 +64,8 @@ public class DoctorSearchService {
             return Collections.emptyList(); // Nothing to delete
         }
 
-        Optional<Boolean> result = doctorSearchRepository.deleteDocuments(ids);
-        if (result.isPresent() && result.get()) {
-            return ids; // Return the list of successfully deleted IDs
-        } else {
-            return Collections.emptyList(); // Return empty list if deletion was unsuccessful
-        }
+        doctorSearchRepository.deleteDocuments(ids);
+        return List.copyOf(ids);
     }
 
     /**
@@ -84,55 +76,32 @@ public class DoctorSearchService {
      * @param similarityThreshold The minimum similarity score for results to be included
      * @return List of search results containing document content and metadata
      */
-    public List<Map<String, Object>> searchDocuments(String query, int topK, double similarityThreshold) {
+    public List<DoctorSearchResult> searchDocuments(
+        String query,
+        int topK,
+        double similarityThreshold,
+        String specialty
+    ) {
+        SearchRequest.Builder requestBuilder = SearchRequest.builder()
+            .query(query.trim())
+            .topK(topK)
+            .similarityThreshold(similarityThreshold);
 
-        SearchRequest searchRequest = SearchRequest.builder()
-                .query(query)
-                .topK(topK)
-                .similarityThreshold(similarityThreshold)
-                .build();
+        if (specialty != null && !specialty.isBlank()) {
+            FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
+            Expression filterExpression = filterBuilder.eq("specialty", specialty.trim()).build();
+            requestBuilder.filterExpression(filterExpression);
+        }
 
-        List<Document> results = doctorSearchRepository.semanticSearchByDoctors(searchRequest);
-
-        return results.stream()
-            .map(doc -> Map.of("content", doc.getContent(), "metadata", doc.getMetadata()))
-            .collect(Collectors.toList());
-    }
-
-    /**
-     * Searches documents using a metadata filter, such as filtering by artist, alongside the given query.
-     *
-     * @param query The search query
-     * @param topK The number of top results to return
-     * @param similarityThreshold The minimum similarity score for results to be included
-     * @param artist The artist to filter results by
-     * @return List of filtered search results containing document content and metadata
-     */
-    public List<Map<String, Object>> searchDocumentsWithFilter(String query, int topK, double similarityThreshold, String artist) {
-        FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
-        Expression filterExpression = filterBuilder.eq("artist", artist)
-            .build();
-
-        SearchRequest searchRequest = SearchRequest.builder()
-                .query(query)
-                .topK(topK)
-                .similarityThreshold(similarityThreshold)
-                .filterExpression(filterExpression)
-                .build();
-
-        List<Document> results = doctorSearchRepository.semanticSearchByDoctors(searchRequest);
+        List<Document> results = doctorSearchRepository.semanticSearchByDoctors(requestBuilder.build());
 
         return results.stream()
-            .map(doc -> Map.of("content", doc.getContent(), "metadata", doc.getMetadata()))
-            .collect(Collectors.toList());
-    }
-
-    /**
-     * Gets the status of the application.
-     *
-     * @return The application status
-     */
-    public String getStatus() {
-        return "Application is running!";
+            .map(doc -> new DoctorSearchResult(
+                doc.getId(),
+                doc.getText(),
+                doc.getMetadata(),
+                doc.getScore()
+            ))
+            .toList();
     }
 }
